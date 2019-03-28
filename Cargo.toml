@@ -5,3 +5,4 @@ authors = ["Justin Liew <justin.liew@kleientertainment.com>"]
 edition = "2018"
 
 [dependencies]
+tun-tap="0.1.2"
