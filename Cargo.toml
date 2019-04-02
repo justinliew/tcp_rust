@@ -5,4 +5,4 @@ authors = ["Justin Liew <justin.liew@kleientertainment.com>"]
 
 [dependencies]
 tun-tap="0.1.2"
-ipnetwork="0.14.0"
+etherparse="0.8.0"
