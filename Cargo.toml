@@ -2,3 +2,7 @@
 name = "tcp_rust"
 version = "0.1.0"
 authors = ["Justin Liew <justin.liew@kleientertainment.com>"]
+
+[dependencies]
+tun-tap="0.1.2"
+ipnetwork="0.14.0"
