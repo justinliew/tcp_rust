@@ -33,6 +33,7 @@ fn main() -> io::Result<()> {
                 let src = iph.source_addr();
                 let dst = iph.destination_addr();
                 if iph.protocol() != 0x06 {
+                    eprintln!("Ignoring non-tcp packet");
                     // ignore non-tcp
                     continue;
                 }
