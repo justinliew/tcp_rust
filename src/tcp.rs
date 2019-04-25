@@ -8,7 +8,7 @@ enum State {
 }
 
 pub struct Connection {
-    state: State
+    state: State,
     send: SendSequenceSpace,
     recv: RecvSequenceSpace,
 }
@@ -61,11 +61,12 @@ impl Default for Connection {
         // State::Closed // temporary for easy testing
         Connection {
             state: State::Listen,
+            // TODO init default
         }
     }
 }
 
-impl State {
+impl Connection {
     pub fn on_packet<'a>(&mut self,  
                             nic: &mut tun_tap::Iface,
                             iph: etherparse::Ipv4HeaderSlice<'a>, 
@@ -78,7 +79,7 @@ impl State {
         // TODO - if we remove this print, we should put this info in the error prints in the match
         eprintln!("{}:{} -> {}:{} {}b of tcp", iph.source_addr(), tcph.source_port(), iph.destination_addr(), tcph.destination_port(), data.len());
         eprintln!("We are in state {:?}", *self);
-        match *self {
+        match self.state {
             State::Closed => {
                 eprintln!("We are in closed state; received unexpected packet");
                 return Ok(0);
@@ -90,13 +91,26 @@ impl State {
                     return Ok(0);
                 }
 
+                // keep track of sender info
+                self.recv.nxt = tcph.sequence_number + 1;
+                self.recv.wnd = tcph.window_size;
+                self.recv.irs = tcph.sequence_number;
+
+                // decide on stuff we are sending them
+                self.send.iss = 0; // TODO - this is the starting sequence number; we should eventually make this random
+                self.send.una = self.iss;
+                self.send.nxt = self.una + 1;
+                self.send.wnd = 10;        
+
                 // establish a connection
                 let mut syn_ack = etherparse::TcpHeader::new(tcph.destination_port(), 
                                                             tcph.source_port(),
-                                                            unimplemented!(), 
-                                                            unimplemented!());
+                                                            self.una,  
+                                                            self.wnd);
                 syn_ack.syn = true;
                 syn_ack.ack = true;
+                syn_ack.acknowledgement_number = self.recv.nxt;
+
                 let mut ip = etherparse::Ipv4Header::new(syn_ack.header_len(), 
                                                             64, 
                                                             etherparse::IpTrafficClass::Tcp, 
