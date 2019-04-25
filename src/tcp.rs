@@ -9,6 +9,51 @@ enum State {
 
 pub struct Connection {
     state: State
+    send: SendSequenceSpace,
+    recv: RecvSequenceSpace,
+}
+
+/*
+    Send Sequence Variables
+
+      SND.UNA - send unacknowledged
+      SND.NXT - send next
+      SND.WND - send window
+      SND.UP  - send urgent pointer
+      SND.WL1 - segment sequence number used for last window update
+      SND.WL2 - segment acknowledgment number used for last window
+                update
+      ISS     - initial send sequence number
+*/
+struct SendSequenceSpace {
+    una: usize,     // send unacknowledged
+    nxt: usize,     // send next
+    wnd: usize,     // send window
+    up: bool,       // send urgent pointer
+    wl1: usize,     // segment sequence number used for last window update
+    wl2: usize,     // segment acknowledgement number used for last window update 
+    iss: usize,     // initial send sequence number
+}
+
+/*
+  Receive Sequence Space
+
+                       1          2          3
+                   ----------|----------|----------
+                          RCV.NXT    RCV.NXT
+                                    +RCV.WND
+
+        1 - old sequence numbers which have been acknowledged
+        2 - sequence numbers allowed for new reception
+        3 - future sequence numbers which are not yet allowed
+
+                         Receive Sequence Space
+*/
+struct RecvSequenceSpace {
+    nxt: usize,
+    wnd: usize,
+    up: bool,
+    irs: usize,
 }
 
 impl Default for Connection {
