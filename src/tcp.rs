@@ -1,5 +1,6 @@
 use std::io;
 
+#[derive(Debug)]
 enum State {
     Closed,
     Listen,
@@ -26,13 +27,13 @@ pub struct Connection {
       ISS     - initial send sequence number
 */
 struct SendSequenceSpace {
-    una: usize,     // send unacknowledged
-    nxt: usize,     // send next
-    wnd: usize,     // send window
+    una: u32,     // send unacknowledged
+    nxt: u32,     // send next
+    wnd: u16,     // send window
     up: bool,       // send urgent pointer
-    wl1: usize,     // segment sequence number used for last window update
-    wl2: usize,     // segment acknowledgement number used for last window update 
-    iss: usize,     // initial send sequence number
+    wl1: u32,     // segment sequence number used for last window update
+    wl2: u32,     // segment acknowledgement number used for last window update 
+    iss: u32,     // initial send sequence number
 }
 
 /*
@@ -50,10 +51,10 @@ struct SendSequenceSpace {
                          Receive Sequence Space
 */
 struct RecvSequenceSpace {
-    nxt: usize,
-    wnd: usize,
+    nxt: u32,
+    wnd: u16,
     up: bool,
-    irs: usize,
+    irs: u32,
 }
 
 impl Default for Connection {
@@ -67,74 +68,75 @@ impl Default for Connection {
 }
 
 impl Connection {
-    pub fn on_packet<'a>(&mut self,  
-                            nic: &mut tun_tap::Iface,
-                            iph: etherparse::Ipv4HeaderSlice<'a>, 
-                            tcph: etherparse::TcpHeaderSlice<'a>, 
-                            data: &'a [u8]) 
-                            -> io::Result<(usize)> {
+    pub fn accept<'a>(&mut self,  
+                        nic: &mut tun_tap::Iface,
+                        iph: etherparse::Ipv4HeaderSlice<'a>, 
+                        tcph: etherparse::TcpHeaderSlice<'a>, 
+                        data: &'a [u8]) 
+                        -> io::Result<Option<Self>> {
         
         let mut buf = [0u8; 1500];
 
         // TODO - if we remove this print, we should put this info in the error prints in the match
         eprintln!("{}:{} -> {}:{} {}b of tcp", iph.source_addr(), tcph.source_port(), iph.destination_addr(), tcph.destination_port(), data.len());
-        eprintln!("We are in state {:?}", *self);
-        match self.state {
-            State::Closed => {
-                eprintln!("We are in closed state; received unexpected packet");
-                return Ok(0);
-            },
-            State::Listen => {
-                if !tcph.syn() {
-                    // only expected syn packet; got sometihng else
-                    eprintln!("We are in Listen state; received unexpected non-syn packet");
-                    return Ok(0);
-                }
-
-                // keep track of sender info
-                self.recv.nxt = tcph.sequence_number + 1;
-                self.recv.wnd = tcph.window_size;
-                self.recv.irs = tcph.sequence_number;
-
-                // decide on stuff we are sending them
-                self.send.iss = 0; // TODO - this is the starting sequence number; we should eventually make this random
-                self.send.una = self.iss;
-                self.send.nxt = self.una + 1;
-                self.send.wnd = 10;        
-
-                // establish a connection
-                let mut syn_ack = etherparse::TcpHeader::new(tcph.destination_port(), 
-                                                            tcph.source_port(),
-                                                            self.una,  
-                                                            self.wnd);
-                syn_ack.syn = true;
-                syn_ack.ack = true;
-                syn_ack.acknowledgement_number = self.recv.nxt;
-
-                let mut ip = etherparse::Ipv4Header::new(syn_ack.header_len(), 
-                                                            64, 
-                                                            etherparse::IpTrafficClass::Tcp, 
-                                                            [
-                                                                iph.destination()[0],
-                                                                iph.destination()[1],
-                                                                iph.destination()[2],
-                                                                iph.destination()[3],
-                                                            ],
-                                                            [
-                                                                iph.source()[0],
-                                                                iph.source()[1],
-                                                                iph.source()[2],
-                                                                iph.source()[3],
-                                                            ]);
-
-                let unwritten = {
-                    let mut unwritten = &mut buf[..];
-                    ip.write(&mut unwritten);
-                    syn_ack.write(&mut unwritten);
-                    unwritten.len()
-                };
-                nic.send(&buf[..unwritten])
-            },
+        eprintln!("We are in state {:?}", self.state);
+        if !tcph.syn() {
+            // only expected syn packet; got sometihng else
+            eprintln!("We are in Listen state; received unexpected non-syn packet");
+            return Ok(0);
         }
+
+        let mut c = Connection {
+            state: State::SynRcvd,
+            send: SendSequenceSpace {
+                iss: 0, // TODO - this is the starting sequence number; we should eventually make this random
+                una: self.send.iss,
+                nxt: self.send.una + 1,
+                wnd: 10,
+                up: false,
+
+                wl1: 0,
+                wl2: 0, 
+            },
+            recv: RecvSequenceSpace {
+                nxt : tcph.sequence_number() + 1,
+                wnd : tcph.window_size(),
+                irs : tcph.sequence_number(),
+            },
+        };
+
+        // establish a connection
+        let mut syn_ack = etherparse::TcpHeader::new(tcph.destination_port(), 
+                                                    tcph.source_port(),
+                                                    c.send.iss,  
+                                                    c.send.wnd);
+        syn_ack.syn = true;
+        syn_ack.ack = true;
+        syn_ack.acknowledgment_number = c.recv.nxt;
+
+        let mut ip = etherparse::Ipv4Header::new(syn_ack.header_len(), 
+                                                    64, 
+                                                    etherparse::IpTrafficClass::Tcp, 
+                                                    [
+                                                        iph.destination()[0],
+                                                        iph.destination()[1],
+                                                        iph.destination()[2],
+                                                        iph.destination()[3],
+                                                    ],
+                                                    [
+                                                        iph.source()[0],
+                                                        iph.source()[1],
+                                                        iph.source()[2],
+                                                        iph.source()[3],
+                                                    ]);
+
+        let unwritten = {
+            let mut unwritten = &mut buf[..];
+            ip.write(&mut unwritten);
+            syn_ack.write(&mut unwritten);
+            unwritten.len()
+        };
+        nic.send(&buf[..unwritten]);
+        Ok(Some(c))
     }
 }
