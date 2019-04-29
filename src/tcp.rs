@@ -165,6 +165,11 @@ impl Connection {
             }
 
             // valid segment check
+            // RCV.NXT =< SEG.SEQ < RCV.NXT+RCV.WND
+            let seqn = tcph.sequence_number();
+            if !Connection::is_between_wrapped(self.recv.nxt, seqn, self.recv.nxt + self.recv.wnd as u32) || seqn == self.recv.nxt {
+                return Ok(())
+            }
 
             // if tcph.acknowledgment_number
             match self.state {
