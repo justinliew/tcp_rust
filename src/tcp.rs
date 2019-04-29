@@ -176,7 +176,18 @@ impl Connection {
                 return Ok(())
             }
 
-            // if tcph.acknowledgment_number
+            // more checks!
+            // Segment Receive      Test
+            // Length  Window
+            // ------- -------      -------------------------------------------
+            //   0         0           SEG.SEQ = RCV.NXT
+            //   0        >0           RCV.NXT =< SEG.SEQ < RCV.NXT+RCV.WND
+            //   >0        0           not acceptable
+            //   >0       >0           RCV.NXT =< SEG.SEQ < RCV.NXT+RCV.WND
+            //                         or RCV.NXT =< SEG.SEQ+SEG.LEN-1 < RCV.NXT+RCV.WND
+            // TODO
+
+
             match self.state {
                 State::SynRcvd => {
                     // expect to get an ACK for our SYN
