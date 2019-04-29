@@ -4,8 +4,8 @@ use std::io;
 enum State {
     Closed,
     Listen,
-    // SynRcvd,
-    // Estab,
+    SynRcvd,
+    Estab,
 }
 
 pub struct Connection {
@@ -57,19 +57,8 @@ struct RecvSequenceSpace {
     irs: u32,
 }
 
-impl Default for Connection {
-    fn default() -> Self {
-        // State::Closed // temporary for easy testing
-        Connection {
-            state: State::Listen,
-            // TODO init default
-        }
-    }
-}
-
 impl Connection {
-    pub fn accept<'a>(&mut self,  
-                        nic: &mut tun_tap::Iface,
+    pub fn accept<'a>(nic: &mut tun_tap::Iface,
                         iph: etherparse::Ipv4HeaderSlice<'a>, 
                         tcph: etherparse::TcpHeaderSlice<'a>, 
                         data: &'a [u8]) 
@@ -79,19 +68,21 @@ impl Connection {
 
         // TODO - if we remove this print, we should put this info in the error prints in the match
         eprintln!("{}:{} -> {}:{} {}b of tcp", iph.source_addr(), tcph.source_port(), iph.destination_addr(), tcph.destination_port(), data.len());
-        eprintln!("We are in state {:?}", self.state);
+        eprintln!("got ip header: {:02x?}", iph);
+        eprintln!("got tcp header: {:02x?}", tcph);
         if !tcph.syn() {
             // only expected syn packet; got sometihng else
             eprintln!("We are in Listen state; received unexpected non-syn packet");
-            return Ok(0);
+            return Ok(None);
         }
 
+        let iss = 0;
         let mut c = Connection {
             state: State::SynRcvd,
             send: SendSequenceSpace {
-                iss: 0, // TODO - this is the starting sequence number; we should eventually make this random
-                una: self.send.iss,
-                nxt: self.send.una + 1,
+                iss,
+                una: iss,
+                nxt: iss + 1,
                 wnd: 10,
                 up: false,
 
@@ -102,6 +93,7 @@ impl Connection {
                 nxt : tcph.sequence_number() + 1,
                 wnd : tcph.window_size(),
                 irs : tcph.sequence_number(),
+                up : false,
             },
         };
 
@@ -129,6 +121,7 @@ impl Connection {
                                                         iph.source()[2],
                                                         iph.source()[3],
                                                     ]);
+        syn_ack.checksum = syn_ack.calc_checksum_ipv4(&ip,&[]).expect("could not calculate checksum");
 
         let unwritten = {
             let mut unwritten = &mut buf[..];
@@ -136,7 +129,17 @@ impl Connection {
             syn_ack.write(&mut unwritten);
             unwritten.len()
         };
+        eprintln!("responding with {:02x?}", &buf[..buf.len() - unwritten]);
         nic.send(&buf[..unwritten]);
         Ok(Some(c))
     }
+
+    pub fn on_packet<'a>(&mut self,  
+                            nic: &mut tun_tap::Iface,
+                            iph: etherparse::Ipv4HeaderSlice<'a>, 
+                            tcph: etherparse::TcpHeaderSlice<'a>, 
+                            data: &'a [u8]) 
+                            -> io::Result<()> {
+                                Ok(())
+                            }
 }
