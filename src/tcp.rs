@@ -2,8 +2,7 @@ use std::io;
 
 #[derive(Debug)]
 enum State {
-    Closed,
-    Listen,
+    //Listen,
     SynRcvd,
     Estab,
 }
@@ -12,6 +11,7 @@ pub struct Connection {
     state: State,
     send: SendSequenceSpace,
     recv: RecvSequenceSpace,
+    ip: etherparse::Ipv4Header,
 }
 
 /*
@@ -25,6 +25,16 @@ pub struct Connection {
       SND.WL2 - segment acknowledgment number used for last window
                 update
       ISS     - initial send sequence number
+
+                   1         2          3          4
+              ----------|----------|----------|----------
+                     SND.UNA    SND.NXT    SND.UNA
+                                          +SND.WND
+
+        1 - old sequence numbers which have been acknowledged
+        2 - sequence numbers of unacknowledged data
+        3 - sequence numbers allowed for new data transmission
+        4 - future sequence numbers which are not yet allowed      
 */
 struct SendSequenceSpace {
     una: u32,     // send unacknowledged
@@ -68,8 +78,6 @@ impl Connection {
 
         // TODO - if we remove this print, we should put this info in the error prints in the match
         eprintln!("{}:{} -> {}:{} {}b of tcp", iph.source_addr(), tcph.source_port(), iph.destination_addr(), tcph.destination_port(), data.len());
-        eprintln!("got ip header: {:02x?}", iph);
-        eprintln!("got tcp header: {:02x?}", tcph);
         if !tcph.syn() {
             // only expected syn packet; got sometihng else
             eprintln!("We are in Listen state; received unexpected non-syn packet");
@@ -95,7 +103,17 @@ impl Connection {
                 irs : tcph.sequence_number(),
                 up : false,
             },
-        };
+            ip: etherparse::Ipv4Header::new(
+                0,
+                64, 
+                etherparse::IpTrafficClass::Tcp, 
+                [
+                    iph.destination()[0], iph.destination()[1], iph.destination()[2], iph.destination()[3],
+                ],
+                [
+                    iph.source()[0], iph.source()[1], iph.source()[2], iph.source()[3],
+                ])
+            };
 
         // establish a connection
         let mut syn_ack = etherparse::TcpHeader::new(tcph.destination_port(), 
@@ -105,41 +123,59 @@ impl Connection {
         syn_ack.syn = true;
         syn_ack.ack = true;
         syn_ack.acknowledgment_number = c.recv.nxt;
-
-        let mut ip = etherparse::Ipv4Header::new(syn_ack.header_len(), 
-                                                    64, 
-                                                    etherparse::IpTrafficClass::Tcp, 
-                                                    [
-                                                        iph.destination()[0],
-                                                        iph.destination()[1],
-                                                        iph.destination()[2],
-                                                        iph.destination()[3],
-                                                    ],
-                                                    [
-                                                        iph.source()[0],
-                                                        iph.source()[1],
-                                                        iph.source()[2],
-                                                        iph.source()[3],
-                                                    ]);
-        syn_ack.checksum = syn_ack.calc_checksum_ipv4(&ip,&[]).expect("could not calculate checksum");
+        c.ip.set_payload_len(syn_ack.header_len() as usize);
 
         let unwritten = {
             let mut unwritten = &mut buf[..];
-            ip.write(&mut unwritten);
+            c.ip.write(&mut unwritten);
             syn_ack.write(&mut unwritten);
             unwritten.len()
         };
-        eprintln!("responding with {:02x?}", &buf[..buf.len() - unwritten]);
         nic.send(&buf[..unwritten]);
         Ok(Some(c))
     }
 
-    pub fn on_packet<'a>(&mut self,  
-                            nic: &mut tun_tap::Iface,
-                            iph: etherparse::Ipv4HeaderSlice<'a>, 
-                            tcph: etherparse::TcpHeaderSlice<'a>, 
-                            data: &'a [u8]) 
-                            -> io::Result<()> {
-                                Ok(())
-                            }
+    fn is_between_wrapped(start: u32, x: u32, end: u32) -> bool {
+        use std::cmp::{Ord,Ordering};
+        match start.cmp(&end) {
+            Ordering::Equal => {
+                false
+            },
+            Ordering::Less => {
+                (start < x && x < end)
+            },
+            Ordering::Greater => {
+                (x > start || x < end)
+            }
+        }
+    }
+
+    pub fn on_packet<'a>(
+        &mut self,  
+        nic: &mut tun_tap::Iface,
+        iph: etherparse::Ipv4HeaderSlice<'a>, 
+        tcph: etherparse::TcpHeaderSlice<'a>, 
+        data: &'a [u8]) 
+        -> io::Result<()> {
+            // acceptable ACK check: 
+            // SND.UNA < SEG.ACK =< SND.NXT
+            let ackn = tcph.acknowledgment_number();
+            if !Connection::is_between_wrapped(self.send.una, ackn, self.send.nxt) || ackn == self.send.nxt {
+                return Ok(())
+            }
+
+            // valid segment check
+
+            // if tcph.acknowledgment_number
+            match self.state {
+                State::SynRcvd => {
+                    // expect to get an ACK for our SYN
+
+                }
+                State::Estab => {
+                    unimplemented!();
+                }
+            }
+            Ok(())
+        }
 }
